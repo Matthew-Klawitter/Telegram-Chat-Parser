@@ -1,43 +1,76 @@
-from __future__ import division, unicode_literals
-from collections import defaultdict
 from bs4 import BeautifulSoup
 import codecs
+import json
 import os
 
-output_dir = "Output"
-messages = []
+input_dir = "html"
+output_dir = "output"
+output_file = "data.json"
 
 
-for file in os.listdir("Data"):
-    print("Processing: " + file)
-    html = codecs.open("Data/" + file, 'r', 'utf-8')
-    soup = BeautifulSoup(html.read(), 'html.parser')
+def create_dirs():
+    if not os.path.exists(input_dir):
+        print("Input directory does not exist. Recreating")
+        os.makedirs(input_dir)
 
-    all_messages = soup.find_all('div', {'class': ['from_name', 'text']})
+    if not os.path.exists(output_dir):
+        print("Creating output directory...")
+        os.makedirs(output_dir)
 
-    for message in all_messages:
-        msg = message.text.replace("\n", "")
-        msg = msg.strip()
-        messages.append(msg)
+def parse_html():
+    messages = []
 
-names = [""]
-chatter = ""
-parsed_data = defaultdict(list)
+    # Find all the data and organize it correctly
+    for file in os.listdir(input_dir):
+        print("Processing: " + file)
+        html = codecs.open(input_dir + "/" + file, 'r', 'utf-8')
+        soup = BeautifulSoup(html.read(), 'html.parser')
 
-for message in messages:
-    if message in names:
-        chatter = message
-    else:
-        parsed_data[chatter].append(message)
+        chat_room = soup.find('div', {'class': ['page_header']}).text.replace("\n", "").strip()
+        all_messages = soup.find_all('div', {'class': ['message default clearfix', 'message default clearfix joined']})
 
-if not os.path.exists(output_dir):
-    os.mkdir(output_dir)
+        last_message = None
 
-for key in parsed_data.keys():
-    texts = ""
-    for message in parsed_data[key]:
-        message = "".join(i for i in message if ord(i)<128)
-        texts += message + "\n"
-    f = open(output_dir + "/" + key + ".txt", "w+")
-    f.write(texts)
-    f.close()
+        for msg in all_messages:
+            date = None
+            name = None
+            text = None
+
+            children = msg.findChildren('div', {'class': ['pull_right date details', 'from_name', 'text']})
+
+            if (len(children) == 3): # At this length we have a new message
+                date = children[0].get("title")
+                name = children[1].text.replace("\n", "").strip() # Name
+                text = children[2].text.replace("\n", "").strip() # Text
+            elif (len(children) == 2): # Message continuation
+                date = children[0].get("title")
+                text = children[1].text.replace("\n", "").strip() # Text
+
+            if name is None: # The text is for the previous message by the same person
+                if not last_message is None:
+                    if not text is None:
+                        last_message["text"] += "\n" + text
+
+                if all_messages.index(msg) == len(all_messages): # Ensures the very last message parsed is added to our list, even if its just additional text
+                    messages.append(last_message)
+
+            else: # The text is for a new message by a new person
+                if last_message is None: # Essentially checking if this is the first message
+                    m = {"chat": chat_room, "date": date, "name": name, "text": text}
+                    last_message = m
+                else:
+                    messages.append(last_message)
+                    m = {"chat": chat_room, "date": date, "name": name, "text": text}
+                    last_message = m
+    return messages
+
+def write_json(data):
+    with open(output_dir + "/" + output_file, 'a+', encoding='utf-8') as f:
+        data = json.dumps(data)
+        f.write(data)
+        f.close()
+
+
+create_dirs()
+write_json(parse_html())
+print("Done! Your json data should be found at: " + output_dir + "/" + output_file)
